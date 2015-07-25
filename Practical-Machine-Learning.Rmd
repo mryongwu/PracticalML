@@ -1,0 +1,147 @@
+---
+output: html_document
+---
+Practical Machine Learning Project
+
+Predicting Exercise Manners
+===========================================
+
+by **Yong Wu**
+
+
+##Introduction
+
+This project aims to predict exercise manners based on data collected from wearable devices, such as Jawbone Up, Nike FuelBand, and Fitbit. We will be using measurements from accelerometers on the belt, forearm, arm and dumbell of six participants to predict the quality of their exercise. For more information, please visit(http://groupware.les.inf.puc-rio.br/har).
+
+## Data and Data Preprocessing
+
+The data used for this exercise composes two parts: a training data set and a test data set. The training data set is available at [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv); while the test data set is available at [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) (https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv). 
+
+We start with loading necessary libraries required for the analyis.
+```{r results='hide', message = FALSE, warning=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+```
+
+Subsequently, we download the data from the sources provided.
+
+```{r}{loaddata, cache = TRUE}
+setInternet2(use = TRUE) # Add this to make the https works on Windows, 
+                         # we also suppress the warnings
+                         # to the next statement to filter some 'noise'.
+train_URL <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+test_URL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+train_file <- "./data/pml-training.csv"
+test_file  <- "./data/pml-testing.csv"
+
+if (!file.exists("./data")) 
+{
+  dir.create("./data")
+}
+
+if (!file.exists(train_file)) 
+{
+  suppressWarnings(download.file(train_URL, destfile = train_file))
+}
+
+if (!file.exists(test_file)) 
+{
+  suppressWarnings(download.file(test_URL, destfile = test_file))
+}
+
+```
+
+Now we are ready to read the data into `R` and observe the structure of the two data frames.
+
+```{r}{readdata, cache = TRUE}
+train_raw <- read.csv("./data/pml-training.csv")
+test_raw <- read.csv("./data/pml-testing.csv")
+dim(train_raw)
+dim(test_raw)
+```
+
+The training data set contains 19,622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. The `classe` variable in the training set is the outcome we want to predict. 
+
+```{r}
+sum(complete.cases(train_raw))
+```
+
+A glance of both data sets indicates that there are some variables contain missing values, and there are some variables that are not very meaningful for our predication. We clean up the data (for both the train and test sets so we can apply the model built on the train data set to the test set later) so that we can concentrate on the most meaningful variables.
+
+We clean the data in a few steps:
+
+  1. Columns that contain `NA` missing values are removed at first.
+  2. Columns that are not very meaningful, such as those with time stamp, are removed.
+  3. Columns that contain no numeric values are removed.
+
+```{r}{cleandata, cache = TRUE}
+train_raw <- train_raw[, colSums(is.na(train_raw)) == 0] 
+test_raw <- test_raw[, colSums(is.na(test_raw)) == 0] 
+classe <- train_raw$classe
+train_remove <- grepl("^X|timestamp|window", names(train_raw))
+train_raw <- train_raw[, !train_remove]
+train_clean_data <- train_raw[, sapply(train_raw, is.numeric)]
+train_clean_data$classe <- classe
+test_remove <- grepl("^X|timestamp|window", names(test_raw))
+test_raw <- test_raw[, !test_remove]
+test_clean_data <- test_raw[, sapply(test_raw, is.numeric)]
+dim(train_clean_data)
+dim(test_clean_data)
+```
+
+We end up with 19,622 observations for the cleaned training data set, and 20 for the test data set. Both sets contain 53 variables. Care has been taken to make sure that the `classe` variable remains in the cleaned training sets.
+
+## Model Building and Cross Validation
+
+We will not split the cleaned training set into a pure training data set (70%) and a validation data set (30%) for cross validation purpose, which will be conducted later.
+
+```{r}
+set.seed(12321) # For reproducibile purpose
+inTrain <- createDataPartition(train_clean_data$classe, p=0.70, list=F)
+train_data <- train_clean_data[inTrain, ]
+test_data <- train_clean_data[-inTrain, ]
+```
+
+In order to build the prediction model, we utilize the `R` package `randomForest` as it can automatically select key variables while maintain a high level of robustness. We will use 5-fold cross validation as well.
+
+```{r}
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., data = train_data, method="rf", trControl = controlRf, ntree = 250)
+modelRf
+```
+
+Now we test the prediction model on the validation data set that we partitioned earlier.
+```{r}{crossvalidation, cache = TRUE}
+predictRf <- predict(modelRf, test_data)
+confusionMatrix(test_data$classe, predictRf)
+accuracy <- postResample(predictRf, test_data$classe)
+accuracy
+oose <- 1 - as.numeric(confusionMatrix(test_data$classe, predictRf)$overall[1])
+oose
+```
+We can observe that the estimated accuracy of the model is 99.49% and the estimated out-of-sample error is 0.51%.
+
+##Prediction
+
+The application to 20 test instance is rather straigtforward:
+```{r}{prediction, cache = TRUE}
+result <- predict(modelRf, test_clean_data[, -length(names(test_clean_data))])
+result
+```
+
+##Appendix: Figures
+
+Correlation Matrix Visualization
+```{r correlation, cache = TRUE}
+corrPlot <- cor(train_data[, -length(names(train_data))])
+corrplot(corrPlot, method="color")
+```
+Decision Tree Visualization
+```{r tree, cache = TRUE}
+treeModel <- rpart(classe ~ ., data=train_data, method="class")
+prp(treeModel) # fast plot
+```
